@@ -541,7 +541,7 @@ func TestProcessMessage_MediaToolHandledSkipsFollowUpLLMAndFinalText(t *testing.
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
 				Workspace:         tmpDir,
-				Model:             "test-model",
+				ModelName:         "test-model",
 				MaxTokens:         4096,
 				MaxToolIterations: 10,
 			},
@@ -627,7 +627,7 @@ func TestProcessMessage_MediaArtifactCanBeForwardedBySendFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.Workspace = tmpDir
-	cfg.Agents.Defaults.Model = "test-model"
+	cfg.Agents.Defaults.ModelName = "test-model"
 	cfg.Agents.Defaults.MaxTokens = 4096
 	cfg.Agents.Defaults.MaxToolIterations = 10
 

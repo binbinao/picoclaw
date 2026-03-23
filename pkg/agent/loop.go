@@ -96,14 +96,15 @@ type continuationTarget struct {
 }
 
 const (
-	defaultResponse           = "The model returned an empty response. This may indicate a provider error or token limit."
-	toolLimitResponse         = "I've reached `max_tool_iterations` without a final response. Increase `max_tool_iterations` in config.json if this task needs more tool steps."
-	sessionKeyAgentPrefix     = "agent:"
-	metadataKeyAccountID      = "account_id"
-	metadataKeyGuildID        = "guild_id"
-	metadataKeyTeamID         = "team_id"
-	metadataKeyParentPeerKind = "parent_peer_kind"
-	metadataKeyParentPeerID   = "parent_peer_id"
+	defaultResponse            = "The model returned an empty response. This may indicate a provider error or token limit."
+	toolLimitResponse          = "I've reached `max_tool_iterations` without a final response. Increase `max_tool_iterations` in config.json if this task needs more tool steps."
+	handledToolResponseSummary = "Requested output delivered via tool attachment."
+	sessionKeyAgentPrefix      = "agent:"
+	metadataKeyAccountID       = "account_id"
+	metadataKeyGuildID         = "guild_id"
+	metadataKeyTeamID          = "team_id"
+	metadataKeyParentPeerKind  = "parent_peer_kind"
+	metadataKeyParentPeerID    = "parent_peer_id"
 )
 
 func NewAgentLoop(
@@ -3253,7 +3254,7 @@ func (al *AgentLoop) applyExplicitSkillCommand(
 
 	skillName, ok := agent.ContextBuilder.ResolveSkillName(arg)
 	if !ok {
-		return true, true, fmt.Sprintf("Unknown skill %q.\n\n%s", arg, buildUseCommandHelp(agent))
+		return true, true, fmt.Sprintf("Unknown skill: %s\nUse /list skills to see installed skills.", arg)
 	}
 
 	if len(parts) < 3 {
@@ -3320,7 +3321,9 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		return al.reloadFunc()
 	}
 	if agent != nil {
-		rt.ListSkillNames = agent.ContextBuilder.ListSkillNames
+		if agent.ContextBuilder != nil {
+			rt.ListSkillNames = agent.ContextBuilder.ListSkillNames
+		}
 		rt.GetModelInfo = func() (string, string) {
 			return agent.Model, resolvedCandidateProvider(agent.Candidates, cfg.Agents.Defaults.Provider)
 		}
@@ -3371,79 +3374,6 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 		}
 	}
 	return rt
-}
-
-func activeSkillNames(agent *AgentInstance, opts processOptions) []string {
-	var out []string
-	seen := make(map[string]struct{})
-
-	appendNames := func(names []string) {
-		for _, name := range names {
-			name = strings.TrimSpace(name)
-			if name == "" {
-				continue
-			}
-			if _, exists := seen[name]; exists {
-				continue
-			}
-			seen[name] = struct{}{}
-			out = append(out, name)
-		}
-	}
-
-	if agent != nil {
-		appendNames(agent.SkillsFilter)
-	}
-	appendNames(opts.ForcedSkills)
-
-	return out
-}
-
-func (al *AgentLoop) applyExplicitSkillCommand(
-	raw string,
-	agent *AgentInstance,
-	opts *processOptions,
-) (matched bool, handled bool, reply string) {
-	commandName, ok := commands.CommandName(raw)
-	if !ok || commandName != "use" {
-		return false, false, ""
-	}
-
-	if agent == nil || agent.ContextBuilder == nil {
-		return true, true, commandsUnavailableSkillMessage()
-	}
-
-	fields := strings.Fields(strings.TrimSpace(raw))
-	if len(fields) < 2 {
-		return true, true, buildUseCommandHelp(agent)
-	}
-
-	if strings.EqualFold(fields[1], "clear") || strings.EqualFold(fields[1], "off") {
-		al.clearPendingSkills(opts.SessionKey)
-		return true, true, "Cleared pending skill override."
-	}
-
-	canonicalSkill, ok := agent.ContextBuilder.ResolveSkillName(fields[1])
-	if !ok {
-		return true, true, fmt.Sprintf("Unknown skill: %s\nUse /list skills to see installed skills.", fields[1])
-	}
-
-	if len(fields) == 2 {
-		al.setPendingSkills(opts.SessionKey, []string{canonicalSkill})
-		return true, true, fmt.Sprintf(
-			"Skill %q is armed for your next message.\nSend your next request normally, or use /use clear to cancel.",
-			canonicalSkill,
-		)
-	}
-
-	message := strings.TrimSpace(strings.Join(fields[2:], " "))
-	if message == "" {
-		return true, true, buildUseCommandHelp(agent)
-	}
-
-	opts.UserMessage = message
-	opts.ForcedSkills = append(opts.ForcedSkills, canonicalSkill)
-	return true, false, ""
 }
 
 func commandsUnavailableSkillMessage() string {
@@ -3503,74 +3433,6 @@ func (al *AgentLoop) takePendingSkills(sessionKey string) []string {
 	}
 
 	return append([]string(nil), skills...)
-}
-
-func (al *AgentLoop) clearPendingSkills(sessionKey string) {
-	sessionKey = strings.TrimSpace(sessionKey)
-	if sessionKey == "" {
-		return
-	}
-	al.pendingSkills.Delete(sessionKey)
-}
-
-func commandsUnavailableSkillMessage() string {
-	return "Skill commands are unavailable in the current context."
-}
-
-func buildUseCommandHelp(agent *AgentInstance) string {
-	usage := "Usage:\n/use <skill> <message>\n/use <skill>\n/use clear"
-	if agent == nil || agent.ContextBuilder == nil {
-		return usage
-	}
-
-	names := agent.ContextBuilder.ListSkillNames()
-	if len(names) == 0 {
-		return "No installed skills.\n\n" + usage
-	}
-
-	return fmt.Sprintf("%s\n\nInstalled Skills:\n- %s", usage, strings.Join(names, "\n- "))
-}
-
-func (al *AgentLoop) setPendingSkills(sessionKey string, skillNames []string) {
-	sessionKey = strings.TrimSpace(sessionKey)
-	if sessionKey == "" || len(skillNames) == 0 {
-		return
-	}
-
-	values := make([]string, 0, len(skillNames))
-	for _, name := range skillNames {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		values = append(values, name)
-	}
-	if len(values) == 0 {
-		return
-	}
-
-	al.pendingSkills.Store(sessionKey, values)
-}
-
-func (al *AgentLoop) takePendingSkills(sessionKey string) []string {
-	sessionKey = strings.TrimSpace(sessionKey)
-	if sessionKey == "" {
-		return nil
-	}
-
-	value, ok := al.pendingSkills.LoadAndDelete(sessionKey)
-	if !ok {
-		return nil
-	}
-
-	skills, ok := value.([]string)
-	if !ok || len(skills) == 0 {
-		return nil
-	}
-
-	out := make([]string, len(skills))
-	copy(out, skills)
-	return out
 }
 
 func (al *AgentLoop) clearPendingSkills(sessionKey string) {
