@@ -12,6 +12,9 @@ build/
 /picoclaw-test
 cmd/**/workspace
 
+# Workspace directory
+workspace/
+
 # Picoclaw specific
 
 # PicoClaw
