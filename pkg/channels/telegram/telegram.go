@@ -83,7 +83,7 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 	}
 	opts = append(opts, telego.WithLogger(logger.NewLogger("telego")))
 
-	bot, err := telego.NewBot(telegramCfg.Token(), opts...)
+	bot, err := telego.NewBot(telegramCfg.Token.String(), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
 	}
@@ -402,10 +402,7 @@ func (c *TelegramChannel) SendPlaceholder(ctx context.Context, chatID string) (s
 		return "", nil
 	}
 
-	text := phCfg.Text
-	if text == "" {
-		text = "Thinking... 💭"
-	}
+	text := phCfg.GetRandomText()
 
 	cid, threadID, err := parseTelegramChatID(chatID)
 	if err != nil {
@@ -642,8 +639,12 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 		}
 	}
 
+	if content == "" && len(mediaPaths) == 0 {
+		return nil
+	}
+
 	if content == "" {
-		content = "[empty message]"
+		content = "[media only]"
 	}
 
 	// In group chats, apply unified group trigger filtering
